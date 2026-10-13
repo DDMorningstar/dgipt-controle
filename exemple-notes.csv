@@ -1,0 +1,6 @@
+Reference Number,Note Number,Nom du contribuable,Téléphone,Type d'impôt,Montant déclaré,Montant attendu,Montant payé,Reste à payer,Devise,Date d'émission,Date de paiement,Statut,Agent émetteur,Agent validateur,Ressort
+NP-2024-000123,NT-1001,KABONGO Jean,+243810000001,IGR,150000,150000,150000,0,CDF,12/01/2024,20/01/2024,Payée,M. Ilunga,Mme Mwamba,Kinshasa-Gombe
+NP-2024-000124,NT-1002,MUKENDI Alice,+243810000002,TVA,820000,820000,200000,620000,CDF,03/02/2024,,Partiellement payée,M. Ilunga,Mme Mwamba,Kinshasa-Limete
+NP-2024-000125,NT-1003,TSHISEKEDI SARL,+243810000003,Patente,45000,45000,0,45000,USD,18/03/2024,,Impayée,Mme Kalala,M. Nsimba,Lubumbashi
+NP-2024-000126,NT-1004,LUMUMBA Paul,+243810000004,IFR,12000,12000,12000,0,USD,05/04/2024,06/04/2024,Payée,M. Ilunga,Mme Mwamba,Kinshasa-Gombe
+NP-2024-000127,NT-1005,N'SINGI Hortense,+243810000005,TVA,310000,310000,0,310000,CDF,22/05/2024,,Annulée,Mme Kalala,M. Nsimba,Matadi

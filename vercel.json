@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/*.php": {
+      "runtime": "vercel-php@0.7.4",
+      "maxDuration": 60,
+      "memory": 1024,
+      "includeFiles": "api/**"
+    }
+  },
+  "rewrites": [
+    { "source": "/api.php", "destination": "/api/api.php" },
+    { "source": "/admin.php", "destination": "/api/admin.php" },
+    { "source": "/icon.php", "destination": "/api/icon.php" },
+    { "source": "/index.php", "destination": "/api/index.php" },
+    { "source": "/", "destination": "/api/index.php" }
+  ],
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/(icon-192.png|icon-512.png|apple-touch-icon.png|logo-dgipt.jpg|manifest.json)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }]
+    }
+  ]
+}

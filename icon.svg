@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Contr�le notes de perception">
+  <rect width="512" height="512" rx="108" fill="#163a4a"/>
+  <rect x="122" y="92" width="268" height="328" rx="22" fill="#e8f3f7"/>
+  <rect x="122" y="92" width="268" height="58" rx="22" fill="#159895"/>
+  <rect x="122" y="128" width="268" height="22" fill="#159895"/>
+  <rect x="156" y="172" width="140" height="12" rx="6" fill="#b7cdd6"/>
+  <rect x="156" y="198" width="196" height="12" rx="6" fill="#b7cdd6"/>
+  <circle cx="256" cy="332" r="72" fill="none" stroke="#1f8a70" stroke-width="14"/>
+  <circle cx="256" cy="332" r="54" fill="none" stroke="#1f8a70" stroke-width="3" stroke-dasharray="6 7"/>
+  <path d="M226 334 l18 18 42-44" fill="none" stroke="#1f8a70" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

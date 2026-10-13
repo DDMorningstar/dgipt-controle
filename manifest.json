@@ -1,0 +1,42 @@
+{
+  "id": "./",
+  "name": "Contrôle des Notes de Perception",
+  "short_name": "DGIPT",
+  "description": "Contrôle hors ligne de l'authenticité et du statut des notes de perception.",
+  "start_url": "./index.php",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#163a4a",
+  "theme_color": "#1a5f7a",
+  "lang": "fr",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "categories": ["business", "finance", "productivity"],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ]
+}

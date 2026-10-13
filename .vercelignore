@@ -1,0 +1,13 @@
+.git
+.htaccess
+.env
+.env.*
+*.log
+_certinfo.php
+_pwa_setup.php
+/admin.php
+/api.php
+/config.php
+/icon.php
+/index.php
+/npc-lib.php
