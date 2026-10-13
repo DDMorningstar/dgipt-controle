@@ -8,6 +8,7 @@ _certinfo.php
 _pwa_setup.php
 _openssl_tmp.cnf
 _jscheck.js
+_dump_sqlite.php
 Thumbs.db
 Desktop.ini
 

@@ -44,6 +44,11 @@ function npc_env_config(): array {
             $cfg['db_ssl'] = true;
         }
     }
+    $onVercel = (string)getenv('VERCEL') !== '';
+    if ($url === '' && $onVercel) {
+        $cfg['db_driver'] = 'sqlite';
+        $cfg['sqlite_path'] = __DIR__ . '/data/npc.sqlite';
+    }
     return $cfg;
 }
 

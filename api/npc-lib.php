@@ -10,7 +10,29 @@ function npc_config(): array {
 }
 
 function npc_driver(array $config): string {
-    return (($config['db_driver'] ?? 'mysql') === 'pgsql') ? 'pgsql' : 'mysql';
+    $d = strtolower((string)($config['db_driver'] ?? 'mysql'));
+    if (in_array($d, ['pgsql', 'postgres', 'postgresql'], true)) return 'pgsql';
+    if (in_array($d, ['sqlite', 'sqlite3'], true)) return 'sqlite';
+    return 'mysql';
+}
+
+function npc_sqlite_file(array $config): string {
+    $src = (string)($config['sqlite_path'] ?? (__DIR__ . '/data/npc.sqlite'));
+    if (!is_file($src)) {
+        throw new RuntimeException('Fichier de notes introuvable sur le serveur.');
+    }
+    $onVercel = (string)getenv('VERCEL') !== '';
+    if (!$onVercel) {
+        return $src;
+    }
+    $dst = rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'npc.sqlite';
+    $needCopy = !is_file($dst)
+        || filesize($dst) !== filesize($src)
+        || filemtime($src) > filemtime($dst);
+    if ($needCopy && !@copy($src, $dst)) {
+        return $src;
+    }
+    return is_file($dst) ? $dst : $src;
 }
 
 function npc_db(array $config, bool $withDb = true): PDO {
@@ -24,6 +46,16 @@ function npc_db(array $config, bool $withDb = true): PDO {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
     ];
+    if ($driver === 'sqlite') {
+        $path = npc_sqlite_file($config);
+        try {
+            $pdo = new PDO('sqlite:' . $path, null, null, $opts);
+            $pdo->exec('PRAGMA busy_timeout=5000');
+            return $pdo;
+        } catch (PDOException $e) {
+            throw new RuntimeException('Connexion SQLite impossible : ' . $e->getMessage());
+        }
+    }
     if ($driver === 'pgsql') {
         $port = (int)($config['db_port'] ?? 5432);
         $dsn = "pgsql:host={$host};port={$port};dbname={$name}";
@@ -54,6 +86,28 @@ function npc_db(array $config, bool $withDb = true): PDO {
 
 function npc_ensure_schema(PDO $db): void {
     $driver = (string)$db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    if ($driver === 'sqlite') {
+        $db->exec('CREATE TABLE IF NOT EXISTS notes (
+            ref TEXT PRIMARY KEY,
+            ref_raw TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )');
+        $db->exec('CREATE TABLE IF NOT EXISTS imports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT DEFAULT NULL,
+            added INTEGER NOT NULL DEFAULT 0,
+            updated INTEGER NOT NULL DEFAULT 0,
+            total INTEGER NOT NULL DEFAULT 0,
+            imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )');
+        $db->exec('CREATE TABLE IF NOT EXISTS inspectors (
+            id TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )');
+        return;
+    }
     if ($driver === 'pgsql') {
         $db->exec('CREATE TABLE IF NOT EXISTS notes (
             ref VARCHAR(191) PRIMARY KEY,
@@ -101,9 +155,14 @@ function npc_ensure_schema(PDO $db): void {
 }
 
 function npc_setup(array $config): void {
-    if (npc_driver($config) === 'pgsql') {
+    $driver = npc_driver($config);
+    if ($driver === 'pgsql' || $driver === 'sqlite') {
         $db = npc_db($config, true);
-        npc_ensure_schema($db);
+        try {
+            npc_ensure_schema($db);
+        } catch (Throwable $e) {
+            if ($driver !== 'sqlite') throw $e;
+        }
         return;
     }
     try {
@@ -476,6 +535,9 @@ function npc_upsert_inspectors(PDO $db, array $people): int {
     if ($driver === 'pgsql') {
         $sql = 'INSERT INTO inspectors (id, payload, updated_at) VALUES (?, ?::jsonb, ?)
             ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at';
+    } elseif ($driver === 'sqlite') {
+        $sql = 'INSERT INTO inspectors (id, payload, updated_at) VALUES (?,?,?)
+            ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at';
     } else {
         $sql = 'INSERT INTO inspectors (id, payload, updated_at) VALUES (?,?,?)
             ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)';
