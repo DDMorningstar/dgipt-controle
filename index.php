@@ -835,7 +835,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:'){
 
     <div class="dossier admin-only">
       <h2>Synchronisation serveur</h2>
-      <p class="muted">Les notes importées sont envoyées au serveur en ligne, puis récupérées automatiquement par les téléphones (même hors Wi‑Fi local).</p>
+      <p class="muted">Importez l’Excel ici (pas sur WAMP). Les nouvelles notes sont envoyées au serveur ; les téléphones les récupèrent avec « Récupérer les notes du serveur ».</p>
       <label class="f" for="serverUrl">URL du serveur (api.php)</label>
       <input class="f" id="serverUrl" type="url" placeholder="http://192.168.x.x/controle/api.php" />
       <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:14px">
@@ -1326,19 +1326,33 @@ function saveCfg(){
 async function applyServerRecords(records, opts = {}){
   if (!Array.isArray(records) || !records.length) return { added: 0, updated: 0 };
   const existing = new Set(await IDB.allKeys());
-  const toPut = [];
-  let added = 0, updated = 0;
+  const incoming = [];
   for (const r of records){
     if (!r || !r.ref) continue;
-    const rec = {
+    incoming.push({
       ref: String(r.ref),
       refRaw: r.refRaw || r.ref,
       std: r.std && typeof r.std === 'object' ? r.std : {},
       fields: r.fields && typeof r.fields === 'object' ? r.fields : {},
       updatedAt: Number(r.updatedAt) || Date.now()
-    };
-    if (!existing.has(rec.ref)){ toPut.push(rec); added++; }
-    else { toPut.push(rec); updated++; }
+    });
+  }
+  const olds = await IDB.getNotesByKeys(incoming.map(r => r.ref).filter(ref => existing.has(ref)));
+  const oldMap = new Map(olds.map(o => [String(o.ref), o]));
+  const toPut = [];
+  let added = 0, updated = 0;
+  for (const rec of incoming){
+    const old = oldMap.get(rec.ref);
+    if (!old){
+      toPut.push(rec);
+      added++;
+      existing.add(rec.ref);
+      oldMap.set(rec.ref, rec);
+    } else if ((Number(rec.updatedAt) || 0) >= (Number(old.updatedAt) || 0)){
+      toPut.push(rec);
+      updated++;
+      oldMap.set(rec.ref, rec);
+    }
   }
   if (toPut.length) await IDB.putNotes(toPut);
   if (toPut.length && !opts.keepCache) invalidateNotesCache();
@@ -1428,6 +1442,13 @@ async function silentSync(opts = {}){
         if (first){
           const inspectors = Array.isArray(data.inspectors) ? data.inspectors : [];
           out.inspectors = await applyServerInspectors(inspectors);
+          const extraUpdates = Array.isArray(data.updates) ? data.updates : [];
+          if (extraUpdates.length){
+            const extra = await applyServerRecords(extraUpdates, { keepCache: true });
+            added += extra.added || 0;
+            updated += extra.updated || 0;
+            if (extra.added || extra.updated) savedAny = true;
+          }
           first = false;
         }
         const native = records.length && records[0] && records[0].ref && (records[0].std || records[0].fields);
@@ -1469,9 +1490,9 @@ async function silentSync(opts = {}){
     }
     if (doPush){
       say(88, 'Envoi des données locales…', 'Partage avec les autres appareils');
-      const notes = await IDB.getAll();
+      const notes = Array.isArray(opts.notes) ? opts.notes : await IDB.getAll();
       if (notes.length){
-        const CHUNK = 25;
+        const CHUNK = 200;
         for (let i = 0; i < notes.length; i += CHUNK){
           const slice = notes.slice(i, i + CHUNK);
           say(88, 'Envoi des données locales…',
@@ -2419,7 +2440,7 @@ async function handleExcelFile(file){
     refreshHome();
     refreshImportMeta();
     toast(`Importation réussie : ${meta.added} ajout(s), ${meta.updated} mise(s) à jour.`);
-    const sent = await silentSync({ push: true, pull: false, timeout: 20000 });
+    const sent = await silentSync({ push: true, pull: false, timeout: 60000, notes: records });
     if (sent.ok) toast('Notes envoyées au serveur. Les téléphones pourront les récupérer.');
     else if (!sent.offline) toast('Import local OK, mais envoi serveur échoué : ' + (sent.error || ''));
   } catch (err){

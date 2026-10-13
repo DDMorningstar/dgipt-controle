@@ -100,7 +100,10 @@ try {
                 'done' => ($offset + $got) >= $page['total'] || $got === 0,
                 'records' => $page['records'],
             ];
-            if ($offset === 0) $out['inspectors'] = fetch_inspectors($db);
+            if ($offset === 0) {
+                $out['inspectors'] = fetch_inspectors($db);
+                $out['updates'] = npc_delta_note_records($withFields, false);
+            }
             json_out($out);
         }
         $records = npc_fetch_notes($db, ['fields' => $withFields]);

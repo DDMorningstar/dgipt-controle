@@ -1,5 +1,5 @@
 /* Contrôle Notes de Perception — cache hors ligne */
-const CACHE = 'npc-v23';
+const CACHE = 'npc-v24';
 const PRECACHE = [
   'index.php',
   'manifest.json',

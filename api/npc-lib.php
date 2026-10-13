@@ -186,6 +186,135 @@ function npc_decode_payload($raw): array {
     return [];
 }
 
+function npc_blob_token(): string {
+    return trim((string)(getenv('BLOB_READ_WRITE_TOKEN') ?: ''));
+}
+
+function npc_blob_store_id(): string {
+    $id = trim((string)(getenv('BLOB_STORE_ID') ?: 'xB9telflK7GXHksL'));
+    return str_starts_with($id, 'store_') ? substr($id, 6) : $id;
+}
+
+function npc_blob_enabled(): bool {
+    return npc_blob_token() !== '';
+}
+
+function npc_http_blob(string $method, string $url, array $headers, ?string $body = null): array {
+    $ch = curl_init($url);
+    if ($ch === false) {
+        throw new RuntimeException('Impossible d’appeler le stockage distant.');
+    }
+    $hdrs = [];
+    foreach ($headers as $k => $v) {
+        $hdrs[] = $k . ': ' . $v;
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_HTTPHEADER => $hdrs,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 45,
+        CURLOPT_FOLLOWLOCATION => true,
+    ]);
+    if ($body !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    }
+    if ((string)getenv('VERCEL') === '') {
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    }
+    $raw = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($raw === false) {
+        throw new RuntimeException('Stockage distant inaccessible : ' . $err);
+    }
+    return ['code' => $code, 'body' => (string)$raw];
+}
+
+function npc_delta_load(): array {
+    if (isset($GLOBALS['npc_delta_mem']) && is_array($GLOBALS['npc_delta_mem'])) {
+        return $GLOBALS['npc_delta_mem'];
+    }
+    $empty = ['notes' => [], 'inspectors' => []];
+    if (!npc_blob_enabled()) {
+        $GLOBALS['npc_delta_mem'] = $empty;
+        return $empty;
+    }
+    $url = 'https://' . npc_blob_store_id() . '.private.blob.vercel-storage.com/npc-delta.json?cache=0';
+    try {
+        $res = npc_http_blob('GET', $url, [
+            'Authorization' => 'Bearer ' . npc_blob_token(),
+        ]);
+    } catch (Throwable $e) {
+        $GLOBALS['npc_delta_mem'] = $empty;
+        return $empty;
+    }
+    if ($res['code'] === 404 || $res['code'] < 200 || $res['code'] >= 300) {
+        $GLOBALS['npc_delta_mem'] = $empty;
+        return $empty;
+    }
+    $data = json_decode($res['body'], true);
+    if (!is_array($data)) $data = $empty;
+    if (!isset($data['notes']) || !is_array($data['notes'])) $data['notes'] = [];
+    if (!isset($data['inspectors']) || !is_array($data['inspectors'])) $data['inspectors'] = [];
+    $GLOBALS['npc_delta_mem'] = $data;
+    return $data;
+}
+
+function npc_delta_save(array $delta): void {
+    if (!npc_blob_enabled()) return;
+    $body = npc_json_encode([
+        'notes' => array_values($delta['notes'] ?? []),
+        'inspectors' => array_values($delta['inspectors'] ?? []),
+        'updatedAt' => (int) round(microtime(true) * 1000),
+    ]);
+    $url = 'https://vercel.com/api/blob?pathname=' . rawurlencode('npc-delta.json');
+    $res = npc_http_blob('PUT', $url, [
+        'Authorization' => 'Bearer ' . npc_blob_token(),
+        'x-api-version' => '12',
+        'x-vercel-blob-store-id' => npc_blob_store_id(),
+        'x-vercel-blob-access' => 'private',
+        'x-allow-overwrite' => '1',
+        'x-add-random-suffix' => '0',
+        'x-content-type' => 'application/json',
+        'x-cache-control-max-age' => '60',
+    ], $body);
+    if ($res['code'] < 200 || $res['code'] >= 300) {
+        throw new RuntimeException('Enregistrement distant impossible (HTTP ' . $res['code'] . ').');
+    }
+    $GLOBALS['npc_delta_mem'] = [
+        'notes' => array_values($delta['notes'] ?? []),
+        'inspectors' => array_values($delta['inspectors'] ?? []),
+    ];
+}
+
+function npc_note_item(array $note, bool $withFields, bool $withStatus = false): ?array {
+    $ref = npc_compact_ref((string)($note['ref'] ?? ''));
+    if ($ref === '') return null;
+    $std = is_array($note['std'] ?? null) ? $note['std'] : [];
+    $fields = is_array($note['fields'] ?? null) ? $note['fields'] : [];
+    $std = npc_hydrate_std($std, $fields);
+    $item = [
+        'ref' => $ref,
+        'refRaw' => (string)($note['refRaw'] ?? $note['ref'] ?? $ref),
+        'std' => $std,
+        'updatedAt' => (int)($note['updatedAt'] ?? 0),
+    ];
+    if ($withFields) $item['fields'] = $fields;
+    if ($withStatus) $item['status'] = npc_classify_status($std);
+    return $item;
+}
+
+function npc_delta_note_records(bool $withFields, bool $withStatus = false): array {
+    $out = [];
+    foreach (npc_delta_load()['notes'] as $n) {
+        if (!is_array($n)) continue;
+        $item = npc_note_item($n, $withFields, $withStatus);
+        if ($item) $out[] = $item;
+    }
+    return $out;
+}
+
 function npc_compact_ref(string $s): string {
     return strtoupper((string)preg_replace('/[^A-Za-z0-9]/', '', $s));
 }
@@ -453,7 +582,17 @@ function npc_fetch_notes(PDO $db, array $opts = []): array {
         if ($withFields) $item['fields'] = $fields;
         $records[] = $item;
     }
-    return $records;
+    $byRef = [];
+    foreach ($records as $item) {
+        $byRef[$item['ref']] = $item;
+    }
+    foreach (npc_delta_note_records($withFields, true) as $item) {
+        $old = $byRef[$item['ref']] ?? null;
+        if (!$old || (int)$item['updatedAt'] >= (int)($old['updatedAt'] ?? 0)) {
+            $byRef[$item['ref']] = $item;
+        }
+    }
+    return array_values($byRef);
 }
 
 function npc_fetch_notes_page(PDO $db, int $offset, int $limit, bool $withFields = false): array {
@@ -522,7 +661,19 @@ function npc_fetch_inspectors(PDO $db): array {
             $list[] = $p;
         }
     }
-    return $list;
+    $byId = [];
+    foreach ($list as $p) {
+        $byId[(string)$p['id']] = $p;
+    }
+    foreach (npc_delta_load()['inspectors'] as $u) {
+        if (!is_array($u) || empty($u['id'])) continue;
+        $id = (string)$u['id'];
+        $old = $byId[$id] ?? null;
+        if (!$old || (int)($u['updatedAt'] ?? 0) >= (int)($old['updatedAt'] ?? 0)) {
+            $byId[$id] = $u;
+        }
+    }
+    return array_values($byId);
 }
 
 function npc_fetch_imports(PDO $db, int $limit = 12): array {
@@ -551,6 +702,23 @@ function npc_upsert_inspectors(PDO $db, array $people): int {
         $payload = npc_json_encode($u);
         $stmt->execute([$id, $payload, $updatedAt]);
         $n++;
+    }
+    if ($n && npc_blob_enabled()) {
+        $delta = npc_delta_load();
+        $byId = [];
+        foreach ($delta['inspectors'] as $u) {
+            if (is_array($u) && !empty($u['id'])) $byId[(string)$u['id']] = $u;
+        }
+        foreach ($people as $u) {
+            if (!is_array($u) || empty($u['id'])) continue;
+            $id = (string)$u['id'];
+            $old = $byId[$id] ?? null;
+            if (!$old || (int)($u['updatedAt'] ?? 0) >= (int)($old['updatedAt'] ?? 0)) {
+                $byId[$id] = $u;
+            }
+        }
+        $delta['inspectors'] = array_values($byId);
+        npc_delta_save($delta);
     }
     return $n;
 }
@@ -623,5 +791,26 @@ function npc_upsert_notes(PDO $db, array $notes, string $source = 'import admin'
     $total = $added + $updated;
     $log = $db->prepare('INSERT INTO imports (source, added, updated, total) VALUES (?,?,?,?)');
     $log->execute([$source, $added, $updated, $total]);
+    if ($total && npc_blob_enabled()) {
+        $delta = npc_delta_load();
+        $byRef = [];
+        foreach ($delta['notes'] as $n) {
+            if (!is_array($n)) continue;
+            $r = npc_compact_ref((string)($n['ref'] ?? ''));
+            if ($r !== '') $byRef[$r] = $n;
+        }
+        foreach ($notes as $note) {
+            if (!is_array($note)) continue;
+            $ref = npc_compact_ref((string)($note['ref'] ?? ''));
+            if ($ref === '') continue;
+            $note['ref'] = $ref;
+            $old = $byRef[$ref] ?? null;
+            if (!$old || (int)($note['updatedAt'] ?? 0) >= (int)($old['updatedAt'] ?? 0)) {
+                $byRef[$ref] = $note;
+            }
+        }
+        $delta['notes'] = array_values($byRef);
+        npc_delta_save($delta);
+    }
     return ['added' => $added, 'updated' => $updated, 'total' => $total];
 }

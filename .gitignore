@@ -9,6 +9,7 @@ _pwa_setup.php
 _openssl_tmp.cnf
 _jscheck.js
 _dump_sqlite.php
+_test_blob.php
 Thumbs.db
 Desktop.ini
 
