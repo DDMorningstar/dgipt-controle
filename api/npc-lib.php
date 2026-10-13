@@ -9,42 +9,81 @@ function npc_config(): array {
     return require $file;
 }
 
-function npc_db(array $config, bool $withDb = true): mysqli {
-    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-    $mysqli = mysqli_init();
-    if (!$mysqli) {
-        throw new RuntimeException('Impossible d’initialiser MySQL.');
-    }
-    if (!empty($config['db_ssl'])) {
-        $mysqli->ssl_set(null, null, null, null, null);
-        if (defined('MYSQLI_OPT_SSL_VERIFY_SERVER_CERT')) {
-            $mysqli->options(MYSQLI_OPT_SSL_VERIFY_SERVER_CERT, false);
-        }
-    }
-    $ok = $mysqli->real_connect(
-        (string)$config['db_host'],
-        (string)$config['db_user'],
-        (string)$config['db_pass'],
-        $withDb ? (string)$config['db_name'] : '',
-        (int)($config['db_port'] ?? 3306)
-    );
-    if (!$ok) {
-        throw new RuntimeException('Connexion MySQL impossible : ' . $mysqli->connect_error);
-    }
-    $mysqli->set_charset((string)($config['db_charset'] ?? 'utf8mb4'));
-    return $mysqli;
+function npc_driver(array $config): string {
+    return (($config['db_driver'] ?? 'mysql') === 'pgsql') ? 'pgsql' : 'mysql';
 }
 
-function npc_ensure_schema(mysqli $db): void {
-    $db->query("CREATE TABLE IF NOT EXISTS notes (
+function npc_db(array $config, bool $withDb = true): PDO {
+    $driver = npc_driver($config);
+    $host = (string)$config['db_host'];
+    $user = (string)$config['db_user'];
+    $pass = (string)$config['db_pass'];
+    $name = (string)$config['db_name'];
+    $opts = [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ];
+    if ($driver === 'pgsql') {
+        $port = (int)($config['db_port'] ?? 5432);
+        $dsn = "pgsql:host={$host};port={$port};dbname={$name}";
+        if (!empty($config['db_ssl'])) {
+            $dsn .= ';sslmode=require';
+        }
+        try {
+            return new PDO($dsn, $user, $pass, $opts);
+        } catch (PDOException $e) {
+            throw new RuntimeException('Connexion Postgres impossible : ' . $e->getMessage());
+        }
+    }
+    $port = (int)($config['db_port'] ?? 3306);
+    $charset = (string)($config['db_charset'] ?? 'utf8mb4');
+    $dsn = "mysql:host={$host};port={$port};charset={$charset}";
+    if ($withDb) {
+        $dsn .= ';dbname=' . $name;
+    }
+    if (!empty($config['db_ssl']) && defined('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT')) {
+        $opts[PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT] = false;
+    }
+    try {
+        return new PDO($dsn, $user, $pass, $opts);
+    } catch (PDOException $e) {
+        throw new RuntimeException('Connexion MySQL impossible : ' . $e->getMessage());
+    }
+}
+
+function npc_ensure_schema(PDO $db): void {
+    $driver = (string)$db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    if ($driver === 'pgsql') {
+        $db->exec('CREATE TABLE IF NOT EXISTS notes (
+            ref VARCHAR(191) PRIMARY KEY,
+            ref_raw VARCHAR(255) NOT NULL,
+            payload JSONB NOT NULL,
+            updated_at BIGINT NOT NULL
+        )');
+        $db->exec('CREATE TABLE IF NOT EXISTS imports (
+            id SERIAL PRIMARY KEY,
+            source VARCHAR(255) DEFAULT NULL,
+            added INT NOT NULL DEFAULT 0,
+            updated INT NOT NULL DEFAULT 0,
+            total INT NOT NULL DEFAULT 0,
+            imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )');
+        $db->exec('CREATE TABLE IF NOT EXISTS inspectors (
+            id VARCHAR(64) PRIMARY KEY,
+            payload JSONB NOT NULL,
+            updated_at BIGINT NOT NULL
+        )');
+        return;
+    }
+    $db->exec("CREATE TABLE IF NOT EXISTS notes (
         ref         VARCHAR(191)  NOT NULL,
         ref_raw     VARCHAR(255)  NOT NULL,
         payload     JSON          NOT NULL,
         updated_at  BIGINT        NOT NULL,
         PRIMARY KEY (ref)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-
-    $db->query("CREATE TABLE IF NOT EXISTS imports (
+    $db->exec("CREATE TABLE IF NOT EXISTS imports (
         id          INT UNSIGNED  NOT NULL AUTO_INCREMENT,
         source      VARCHAR(255)  DEFAULT NULL,
         added       INT           NOT NULL DEFAULT 0,
@@ -53,8 +92,7 @@ function npc_ensure_schema(mysqli $db): void {
         imported_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
-
-    $db->query("CREATE TABLE IF NOT EXISTS inspectors (
+    $db->exec("CREATE TABLE IF NOT EXISTS inspectors (
         id          VARCHAR(64)   NOT NULL,
         payload     JSON          NOT NULL,
         updated_at  BIGINT        NOT NULL,
@@ -63,19 +101,30 @@ function npc_ensure_schema(mysqli $db): void {
 }
 
 function npc_setup(array $config): void {
+    if (npc_driver($config) === 'pgsql') {
+        $db = npc_db($config, true);
+        npc_ensure_schema($db);
+        return;
+    }
     try {
         $root = npc_db($config, false);
-        $name = $root->real_escape_string((string)$config['db_name']);
-        $root->query("CREATE DATABASE IF NOT EXISTS `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-        $root->select_db((string)$config['db_name']);
+        $name = str_replace(['`', '"', "'"], '', (string)$config['db_name']);
+        $root->exec("CREATE DATABASE IF NOT EXISTS `$name` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        $root->exec("USE `$name`");
         npc_ensure_schema($root);
-        $root->close();
-        return;
     } catch (Throwable $e) {
         $db = npc_db($config, true);
         npc_ensure_schema($db);
-        $db->close();
     }
+}
+
+function npc_decode_payload($raw): array {
+    if (is_array($raw)) return $raw;
+    if (is_string($raw) && $raw !== '') {
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+    return [];
 }
 
 function npc_compact_ref(string $s): string {
@@ -326,13 +375,12 @@ function npc_classify_status(array $std): array {
     return $pack('open', 'open', 'Ouverte');
 }
 
-function npc_fetch_notes(mysqli $db, array $opts = []): array {
+function npc_fetch_notes(PDO $db, array $opts = []): array {
     $withFields = !array_key_exists('fields', $opts) || (bool)$opts['fields'];
-    $sql = 'SELECT ref, ref_raw, payload, updated_at FROM notes ORDER BY updated_at DESC, ref';
-    $res = $db->query($sql);
+    $rows = $db->query('SELECT ref, ref_raw, payload, updated_at FROM notes ORDER BY updated_at DESC, ref')->fetchAll();
     $records = [];
-    while ($row = $res->fetch_assoc()) {
-        $payload = json_decode($row['payload'] ?? '{}', true) ?: [];
+    foreach ($rows as $row) {
+        $payload = npc_decode_payload($row['payload'] ?? '{}');
         $std = is_array($payload['std'] ?? null) ? $payload['std'] : [];
         $fields = is_array($payload['fields'] ?? null) ? $payload['fields'] : [];
         $std = npc_hydrate_std($std, $fields);
@@ -349,30 +397,26 @@ function npc_fetch_notes(mysqli $db, array $opts = []): array {
     return $records;
 }
 
-function npc_fetch_notes_page(mysqli $db, int $offset, int $limit, bool $withFields = false): array {
+function npc_fetch_notes_page(PDO $db, int $offset, int $limit, bool $withFields = false): array {
     $offset = max(0, $offset);
     $limit = max(1, min(400, $limit));
-    $total = 0;
-    $cres = $db->query('SELECT COUNT(*) AS c FROM notes');
-    if ($cres) $total = (int)($cres->fetch_assoc()['c'] ?? 0);
-    $records = [];
+    $total = (int)$db->query('SELECT COUNT(*) AS c FROM notes')->fetchColumn();
     $sql = 'SELECT ref, ref_raw, payload, updated_at FROM notes ORDER BY ref LIMIT ' . $limit . ' OFFSET ' . $offset;
-    $res = $db->query($sql);
-    if ($res) {
-        while ($row = $res->fetch_assoc()) {
-            $payload = json_decode($row['payload'] ?? '{}', true) ?: [];
-            $std = is_array($payload['std'] ?? null) ? $payload['std'] : [];
-            $fields = is_array($payload['fields'] ?? null) ? $payload['fields'] : [];
-            $std = npc_hydrate_std($std, $fields);
-            $item = [
-                'ref'       => (string)$row['ref'],
-                'refRaw'    => (string)$row['ref_raw'],
-                'std'       => $std,
-                'updatedAt' => (int)$row['updated_at'],
-            ];
-            if ($withFields) $item['fields'] = $fields;
-            $records[] = $item;
-        }
+    $rows = $db->query($sql)->fetchAll();
+    $records = [];
+    foreach ($rows as $row) {
+        $payload = npc_decode_payload($row['payload'] ?? '{}');
+        $std = is_array($payload['std'] ?? null) ? $payload['std'] : [];
+        $fields = is_array($payload['fields'] ?? null) ? $payload['fields'] : [];
+        $std = npc_hydrate_std($std, $fields);
+        $item = [
+            'ref'       => (string)$row['ref'],
+            'refRaw'    => (string)$row['ref_raw'],
+            'std'       => $std,
+            'updatedAt' => (int)$row['updated_at'],
+        ];
+        if ($withFields) $item['fields'] = $fields;
+        $records[] = $item;
     }
     return ['records' => $records, 'total' => $total, 'limit' => $limit, 'offset' => $offset];
 }
@@ -408,18 +452,45 @@ function npc_note_matches(array $n, string $status, string $q): bool {
     return strpos($blob, $ql) !== false;
 }
 
-function npc_fetch_inspectors(mysqli $db): array {
+function npc_fetch_inspectors(PDO $db): array {
     $list = [];
-    $res = $db->query('SELECT id, payload, updated_at FROM inspectors');
-    while ($row = $res->fetch_assoc()) {
-        $p = json_decode($row['payload'] ?? '{}', true);
-        if (is_array($p)) {
+    $rows = $db->query('SELECT id, payload, updated_at FROM inspectors')->fetchAll();
+    foreach ($rows as $row) {
+        $p = npc_decode_payload($row['payload'] ?? '{}');
+        if ($p) {
             $p['id'] = $row['id'];
             $p['updatedAt'] = (int)$row['updated_at'];
             $list[] = $p;
         }
     }
     return $list;
+}
+
+function npc_fetch_imports(PDO $db, int $limit = 12): array {
+    $limit = max(1, min(50, $limit));
+    return $db->query('SELECT id, source, added, updated, total, imported_at FROM imports ORDER BY id DESC LIMIT ' . $limit)->fetchAll();
+}
+
+function npc_upsert_inspectors(PDO $db, array $people): int {
+    $driver = (string)$db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    if ($driver === 'pgsql') {
+        $sql = 'INSERT INTO inspectors (id, payload, updated_at) VALUES (?, ?::jsonb, ?)
+            ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at';
+    } else {
+        $sql = 'INSERT INTO inspectors (id, payload, updated_at) VALUES (?,?,?)
+            ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)';
+    }
+    $stmt = $db->prepare($sql);
+    $n = 0;
+    foreach ($people as $u) {
+        if (!is_array($u) || empty($u['id'])) continue;
+        $id = (string)$u['id'];
+        $updatedAt = (string)($u['updatedAt'] ?? (int) round(microtime(true) * 1000));
+        $payload = npc_json_encode($u);
+        $stmt->execute([$id, $payload, $updatedAt]);
+        $n++;
+    }
+    return $n;
 }
 
 function npc_stats(array $notes): array {
@@ -457,13 +528,15 @@ function npc_pin_matches(array $user, string $pin): bool {
     return false;
 }
 
-function npc_upsert_notes(mysqli $db, array $notes, string $source = 'import admin'): array {
+function npc_upsert_notes(PDO $db, array $notes, string $source = 'import admin'): array {
+    $driver = (string)$db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $jsonCast = $driver === 'pgsql' ? '::jsonb' : '';
     $stmtGet = $db->prepare('SELECT ref FROM notes WHERE ref = ?');
-    $stmtIns = $db->prepare('INSERT INTO notes (ref, ref_raw, payload, updated_at) VALUES (?,?,?,?)');
-    $stmtUpd = $db->prepare('UPDATE notes SET ref_raw = ?, payload = ?, updated_at = ? WHERE ref = ?');
+    $stmtIns = $db->prepare('INSERT INTO notes (ref, ref_raw, payload, updated_at) VALUES (?,?,?' . $jsonCast . ',?)');
+    $stmtUpd = $db->prepare('UPDATE notes SET ref_raw = ?, payload = ?' . $jsonCast . ', updated_at = ? WHERE ref = ?');
     $added = 0;
     $updated = 0;
-    $db->begin_transaction();
+    $db->beginTransaction();
     foreach ($notes as $note) {
         if (!is_array($note)) continue;
         $ref = npc_compact_ref((string)($note['ref'] ?? ''));
@@ -474,23 +547,19 @@ function npc_upsert_notes(mysqli $db, array $notes, string $source = 'import adm
             'fields' => $note['fields'] ?? new stdClass(),
         ]);
         $updatedAt = (string)($note['updatedAt'] ?? (int) round(microtime(true) * 1000));
-        $stmtGet->bind_param('s', $ref);
-        $stmtGet->execute();
-        $exists = $stmtGet->get_result()->fetch_assoc();
+        $stmtGet->execute([$ref]);
+        $exists = $stmtGet->fetch();
         if ($exists) {
-            $stmtUpd->bind_param('ssss', $refRaw, $payload, $updatedAt, $ref);
-            $stmtUpd->execute();
+            $stmtUpd->execute([$refRaw, $payload, $updatedAt, $ref]);
             $updated++;
         } else {
-            $stmtIns->bind_param('ssss', $ref, $refRaw, $payload, $updatedAt);
-            $stmtIns->execute();
+            $stmtIns->execute([$ref, $refRaw, $payload, $updatedAt]);
             $added++;
         }
     }
     $db->commit();
     $total = $added + $updated;
     $log = $db->prepare('INSERT INTO imports (source, added, updated, total) VALUES (?,?,?,?)');
-    $log->bind_param('siii', $source, $added, $updated, $total);
-    $log->execute();
+    $log->execute([$source, $added, $updated, $total]);
     return ['added' => $added, 'updated' => $updated, 'total' => $total];
 }

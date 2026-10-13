@@ -111,9 +111,7 @@ if ($ajax !== '') {
             $notes = npc_fetch_notes($db, ['fields' => false]);
             $stats = npc_stats($notes);
             $inspectors = npc_fetch_inspectors($db);
-            $imports = [];
-            $res = $db->query('SELECT id, source, added, updated, total, imported_at FROM imports ORDER BY id DESC LIMIT 12');
-            while ($row = $res->fetch_assoc()) $imports[] = $row;
+            $imports = npc_fetch_imports($db, 12);
             $recent = [];
             foreach (array_slice($notes, 0, 12) as $n) {
                 unset($n['fields']);
@@ -193,12 +191,7 @@ if ($ajax !== '') {
                 $rec['pinHash'] = npc_hash_pin($pin, $rec['salt']);
                 $rec['mustChangePin'] = false;
             }
-            $payload = npc_json_encode($rec);
-            $updatedAt = (string)$rec['updatedAt'];
-            $stmt = $db->prepare('INSERT INTO inspectors (id, payload, updated_at) VALUES (?,?,?)
-                ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)');
-            $stmt->bind_param('sss', $id, $payload, $updatedAt);
-            $stmt->execute();
+            npc_upsert_inspectors($db, [$rec]);
             echo npc_json_encode(['ok' => true, 'id' => $id]);
             exit;
         }

@@ -2,15 +2,11 @@
 
 Application PWA pour vérifier les notes de perception, en ligne et hors ligne.
 
-## Mise en ligne (Vercel + GitHub)
+- App : https://dgipt-controle.vercel.app
+- GitHub : https://github.com/DDMorningstar/dgipt-controle
 
-1. Créez une base **MySQL** (PlanetScale, Railway, Aiven, etc.).
-2. Dans Vercel → Project → Settings → Environment Variables :
-   - `DATABASE_URL` = `mysql://user:pass@host:3306/npc?ssl=true`
-   - ou `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, `DB_SSL=true`
-3. Déployez. L’URL HTTPS active le hors-ligne et l’installation sur téléphone.
-4. Ouvrez l’app, connectez-vous (PIN `0000` admin), puis **Envoyer la base locale** depuis un appareil qui a déjà les notes, ou importez l’Excel.
+## Mise en ligne
 
-## Local (WAMP, optionnel)
+Ouvrez l’URL HTTPS ci-dessus sur le téléphone (PIN admin `0000`). Le navigateur peut alors installer l’app et garder les notes hors ligne.
 
-Les fichiers PHP à la racine restent utilisables avec MySQL local (`config.php`).
+Les notes partagées entre PC et téléphones passent par la base Vercel (Neon Postgres). Après un import Excel, utilisez **Envoyer la base locale vers le serveur**.

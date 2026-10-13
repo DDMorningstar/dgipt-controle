@@ -60,13 +60,13 @@ function require_key(array $config): void {
     }
 }
 
-function db_connect(array $config, bool $withDb = true): mysqli {
+function db_connect(array $config, bool $withDb = true): PDO {
     return npc_db($config, $withDb);
 }
-function ensure_schema(mysqli $db): void { npc_ensure_schema($db); }
+function ensure_schema(PDO $db): void { npc_ensure_schema($db); }
 function compact_ref(string $s): string { return npc_compact_ref($s); }
-function fetch_note_records(mysqli $db): array { return npc_fetch_notes($db); }
-function fetch_inspectors(mysqli $db): array { return npc_fetch_inspectors($db); }
+function fetch_note_records(PDO $db): array { return npc_fetch_notes($db); }
+function fetch_inspectors(PDO $db): array { return npc_fetch_inspectors($db); }
 
 $action = (string)($_GET['action'] ?? $_POST['action'] ?? 'ping');
 require_key($config);
@@ -128,18 +128,7 @@ try {
         $body = read_body();
         $people = $body['inspectors'] ?? [];
         if (!is_array($people)) json_out(['ok' => false, 'error' => 'Format invalide.'], 400);
-        $stmt = $db->prepare('INSERT INTO inspectors (id, payload, updated_at) VALUES (?,?,?)
-            ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)');
-        $n = 0;
-        foreach ($people as $u) {
-            if (!is_array($u) || empty($u['id'])) continue;
-            $id = (string)$u['id'];
-            $updatedAt = (string)($u['updatedAt'] ?? (int) round(microtime(true) * 1000));
-            $payload = npc_json_encode($u);
-            $stmt->bind_param('sss', $id, $payload, $updatedAt);
-            $stmt->execute();
-            $n++;
-        }
+        $n = npc_upsert_inspectors($db, $people);
         json_out(['ok' => true, 'count' => $n]);
     }
 

@@ -10,3 +10,6 @@ _openssl_tmp.cnf
 _jscheck.js
 Thumbs.db
 Desktop.ini
+
+.vercel
+.env*

@@ -636,7 +636,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:'){
     <div id="emptyWarn" class="alert-empty hidden">
       <b>Aucune note sur cet appareil.</b>
       Le téléphone et le PC ne partagent pas automatiquement IndexedDB :
-      les notes passent par le serveur WAMP.
+      les notes passent par le serveur en ligne.
       <button type="button" class="btn btn-primary btn-block" id="btnPullHome" style="margin-top:12px">Récupérer les notes du serveur</button>
     </div>
 
@@ -835,7 +835,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:'){
 
     <div class="dossier admin-only">
       <h2>Synchronisation serveur</h2>
-      <p class="muted">Les notes importées sur le PC sont envoyées à MySQL, puis récupérées par les téléphones sur le même réseau (<code>http://IP-DU-PC/controle/</code>).</p>
+      <p class="muted">Les notes importées sont envoyées au serveur en ligne, puis récupérées automatiquement par les téléphones (même hors Wi‑Fi local).</p>
       <label class="f" for="serverUrl">URL du serveur (api.php)</label>
       <input class="f" id="serverUrl" type="url" placeholder="http://192.168.x.x/controle/api.php" />
       <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:14px">
@@ -1394,10 +1394,10 @@ async function silentSync(opts = {}){
   }
   let savedAny = false;
   try {
-    say(8, 'Vérification du serveur…', 'WAMP / MySQL');
+    say(8, 'Vérification du serveur…', 'Connexion au serveur');
     await fetchApi(apiAction('setup'), Math.min(pageMs, 12000)).catch(() => ({}));
     if (doPull){
-      say(18, 'Téléchargement des notes…', 'Récupération depuis le PC');
+      say(18, 'Téléchargement des notes…', 'Récupération depuis le serveur');
       const PAGE = 200;
       let offset = 0;
       let total = null;
